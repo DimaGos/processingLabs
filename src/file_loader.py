@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk, Toplevel, simpledialog
 import pandas as pd
 import easygui  # Используем easygui вместо filedialog для выбора файла
+import csv  # Для определения разделителя
+import os
 
 def load_file_and_show_table():
     filepath = easygui.fileopenbox(
@@ -14,29 +16,27 @@ def load_file_and_show_table():
         return None
 
     try:
-        file_extension = filepath.split('.')[-1].lower()
+        file_extension = os.path.splitext(filepath)[-1].lower()
 
-        if file_extension == 'csv':
-            data = pd.read_csv(filepath, sep=None, engine='python')
-        elif file_extension in ['xlsx', 'xls']:
-            data = pd.read_excel(filepath, engine='openpyxl' if file_extension == 'xlsx' else 'xlrd')
-        elif file_extension == 'txt':
-            # Определяем количество столбцов из первой строки
-            with open(filepath, 'r', encoding='utf-8') as f:
-                first_line = f.readline()
-                if not first_line:
-                    messagebox.showerror("Ошибка", "Файл пустой.")
-                    return None
-                num_columns = len(first_line.strip().split())
-                column_names = [f"Column {i+1}" for i in range(num_columns)]
-            data = pd.read_csv(
-                filepath,
-                sep=r'\s+|\t+|,',  # Разделители: пробелы, табуляция или запятая
-                engine='python',
-                header=None,  # Нет заголовка
-                names=column_names,
-                decimal=','
-            )
+        if file_extension == '.csv':
+            # Предполагаем, что CSV-файл имеет разделитель запятую и содержит заголовки
+            data = pd.read_csv(filepath, sep=',', engine='python')
+            # Приводим все числовые данные к стандартному виду с точкой
+            data = convert_decimal_separator(data)
+        elif file_extension == '.txt':
+            # Читаем данные, используя регулярное выражение для разделения
+            data = pd.read_csv(filepath, sep=r'\s+', engine='python', header=None)
+            # Приводим все числовые данные к стандартному виду с точкой
+            data = convert_decimal_separator(data)
+            # Создаём названия столбцов
+            data.columns = [f"Column {i+1}" for i in range(len(data.columns))]
+        elif file_extension in ['.xlsx', '.xls']:
+            # Читаем данные без заголовков
+            data = pd.read_excel(filepath, engine='openpyxl' if file_extension == '.xlsx' else 'xlrd', header=None)
+            # Приводим все числовые данные к стандартному виду с точкой
+            data = convert_decimal_separator(data)
+            # Создаём названия столбцов
+            data.columns = [f"Column {i+1}" for i in range(len(data.columns))]
         else:
             messagebox.showwarning("Ошибка", "Неподдерживаемый формат файла.")
             return None
@@ -44,30 +44,14 @@ def load_file_and_show_table():
         data = data.where(pd.notnull(data), None)  # Заполняем пустые значения None
 
         # Проверка, что data.columns не пустые
-        if len(data.columns) == 0:
-            messagebox.showerror("Ошибка", "Файл не содержит столбцов.")
+        if data.empty or len(data.columns) == 0:
+            messagebox.showerror("Ошибка", "Файл не содержит данных.")
             return None
 
-        # Убедимся, что все названия столбцов являются строками и не пустые
-        data.columns = [str(col).strip() if str(col).strip() else f"Column {i+1}" for i, col in enumerate(data.columns)]
-
-        # Проверка на уникальность названий столбцов
-        if len(data.columns) != len(set(data.columns)):
-            messagebox.showwarning("Предупреждение", "Названия столбцов не уникальны. Переименуйте столбцы.")
-            renamed_data = rename_columns_window(data)
-            if renamed_data is None:
-                # Пользователь отменил переименование столбцов
-                return None
-        else:
-            # Предлагаем переименовать столбцы для уверенности
-            renamed_data = rename_columns_window(data)
-            if renamed_data is None:
-                # Пользователь отменил переименование столбцов
-                return None
-
-        # Проверка, что после переименования названия столбцов корректны
-        if renamed_data is None or renamed_data.empty:
-            messagebox.showerror("Ошибка", "Не удалось переименовать столбцы.")
+        # Предлагаем переименовать столбцы
+        renamed_data = rename_columns_window(data)
+        if renamed_data is None:
+            # Пользователь отменил переименование столбцов
             return None
 
         show_table_window(renamed_data)  # Отображаем таблицу
@@ -76,6 +60,22 @@ def load_file_and_show_table():
     except Exception as e:
         messagebox.showerror("Ошибка", f"Ошибка при загрузке файла: {e}")
         return None
+
+def convert_decimal_separator(data):
+    """Преобразует десятичный разделитель из запятой в точку во всех строковых данных."""
+    # Функция для преобразования отдельных значений
+    def convert_value(val):
+        if isinstance(val, str):
+            val = val.replace(',', '.')
+            try:
+                return float(val)
+            except ValueError:
+                return val
+        return val
+
+    # Применяем функцию ко всем ячейкам DataFrame
+    data = data.applymap(convert_value)
+    return data
 
 def rename_columns_window(data):
     """Открывает окно для переименования столбцов и возвращает обновлённые данные."""
